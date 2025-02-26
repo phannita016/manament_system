@@ -1,0 +1,37 @@
+version: '3.9'
+
+services:
+  mongo:
+    image: mongo:latest
+    container_name: mongo
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: Passw0rd
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - management-network
+
+  goapp:
+    build: .
+    container_name: go-app
+    working_dir: /app
+    ports:
+      - "8080:8080"
+    depends_on:
+      - mongo
+    environment:
+      MONGODB_URI: mongodb://root:Passw0rd@mongo:27017/management
+      MONGODB_USERNAME: root
+      MONGODB_PASSWORD: Passw0rd 
+    networks:
+      - management-network
+
+volumes:
+  mongo-data:
+
+networks:
+  management-network:
+    driver: bridge
