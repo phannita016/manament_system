@@ -15,7 +15,7 @@
 *default authorize for admin*
 ```
 username: root
-password: Passw0rd
+password: P@ssw0rd
 ```
 
 *   **`POST /authorize/login`**
