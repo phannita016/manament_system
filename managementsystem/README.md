@@ -14,7 +14,7 @@
 
 *default authorize for admin*
 ```
-username: root
+username: admin
 password: P@ssw0rd
 ```
 
