@@ -2,17 +2,17 @@ package apps
 
 import (
 	"context"
-	"fmt"
+	"log"
 	"log/slog"
 	"os"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/labstack/echo/v4"
 	"github.com/phannita016/management/apis/collect/authorize"
 	"github.com/phannita016/management/apis/collect/management"
 	"github.com/phannita016/management/apis/middleware"
 	"github.com/phannita016/management/apis/serve"
-	"github.com/phannita016/management/apis/validate"
 	"github.com/phannita016/management/driver"
 	"github.com/phannita016/management/store"
 	"github.com/phannita016/management/store/cache"
@@ -20,71 +20,91 @@ import (
 )
 
 type Apps struct {
-	Addr        string
-	Ctx         context.Context
-	server      *Server
+	// addr listen http server.
+	Addr string
+
+	// context integrate config collector.
+	Ctx context.Context
+
+	// http-server
+	server *Server
+
+	// driver mongo client
 	mongoClient *mongo.Client
 
+	// internal log handle.
+	Logger *slog.Logger
+
+	// secret authorize
+	// sign the token with a secret key.
 	Secret []byte
 
+	// skipper defines a function to skip middleware.
 	Skippers []string
 
+	// cache store
 	Cache store.Cache[string]
 
+	// middleware control handler
 	Middleware *middleware.Middleware
 }
 
+// AppsServer running application
 func AppsServer(app *Apps, opts ...Option) func(c context.Context) error {
+	// apply apps default config.
 	app.ApplyApps()
 
-	var e = serve.New(app.Middleware.Authorization(), app.Middleware.AuthorizeWithToken)
-	validate.RegisterValidator(e)
-	if app.server == nil {
-		app.server = NewServer(app.Addr, e)
+	// apply config
+	for _, opt := range opts {
+		opt(app)
 	}
-	defer app.server.Stop(app.Ctx)
 
-	client, err := app.Database()
+	// srv instant serve echo server
+	// serve input middleware argument security.
+	var e = serve.New(middleware.Logger(app.Logger), app.Middleware.Authorization(), app.Middleware.AuthorizeWithToken)
+
+	// assign apps-server
+	if app.server == nil {
+		app.server = NewServer(app.Addr, e, app.Logger)
+	}
+
+	// connect driver mongoDB
+	client, err := app.ConnectDriver()
 	if err != nil {
-		slog.Error("Failed to connect to database", slog.Any("err", err))
 		return func(c context.Context) error {
 			return err
 		}
 	}
 	app.mongoClient = client
 
+	// handler route apis
 	app.HandleFunc(e)
 
+	// listen appx collector server.
+	// binding port addr
 	if err := app.server.Run(app.Ctx); err != nil {
-		fmt.Println(err)
+		app.Logger.ErrorContext(app.Ctx, "Server", slog.Any("err", err))
 	}
 
+	// return function shutdown server
 	return app.server.Stop
 }
 
+// HandleFunc function route handler
 func (apps *Apps) HandleFunc(e *echo.Echo) {
+	// route authorized handler
 	authorize.New(e, apps.Secret, apps.Cache)
 
+	// route management handler
 	g := e.Group("/management")
 	management.New(g, apps.mongoClient)
 }
 
-func (apps *Apps) Database() (*mongo.Client, error) {
-	client, err := driver.NewMongoClient(driver.MongoDriver{
-		Hostname: os.Getenv("MONGODB_URI"),
-		Username: os.Getenv("MONGODB_USERNAME"),
-		Password: os.Getenv("MONGODB_PASSWORD"),
-		PoolSize: 20,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	slog.Info("Connection Database-Server...")
-	return client, nil
-}
-
+// ApplyApps set default value of struct.
 func (apps *Apps) ApplyApps() {
+	if apps.Logger == nil {
+		apps.Logger = slog.Default()
+	}
 	if apps.Ctx == nil {
 		apps.Ctx = context.Background()
 	}
@@ -100,4 +120,31 @@ func (apps *Apps) ApplyApps() {
 	if apps.Middleware == nil {
 		apps.Middleware = middleware.NewMiddleware(apps.Secret, apps.Cache, apps.Skippers)
 	}
+}
+
+// new mongo client
+func (apps *Apps) ConnectDriver() (*mongo.Client, error) {
+	err := godotenv.Load()
+	if err != nil {
+		log.Println("No .env file found. This is okay in production if environment variables are set.")
+		return nil, err
+	}
+
+	uri := os.Getenv("MONGODB_URI")
+	username := os.Getenv("MONGODB_USERNAME")
+	password := os.Getenv("MONGODB_PASSWORD")
+
+	client, err := driver.NewMongoClient(driver.MongoDriver{
+		Hostname: uri,
+		Username: username,
+		Password: password,
+		PoolSize: 20,
+	})
+	if err != nil {
+		slog.Error("Failed to connect to database", slog.Any("err", err))
+		return nil, err
+	}
+
+	slog.Info("Connection Database-Server...")
+	return client, nil
 }

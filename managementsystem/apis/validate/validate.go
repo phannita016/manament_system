@@ -1,48 +1,45 @@
 package validate
 
 import (
-	"fmt"
 	"strings"
 
 	"github.com/go-playground/validator/v10"
 )
 
+// create val instant validator.
 var (
-	validate = validator.New()
+	val    = validator.New()
+	AddNew = New{val: val}
 )
 
-type ErrorValidation struct {
-	Tag     string `json:"tag"`
-	Field   string `json:"field"`
-	Message string `json:"message"`
+// New struct implement validator
+type New struct {
+	val *validator.Validate
 }
 
-type ErrorValidator struct {
-	Errors []*ErrorValidation `json:"errors"`
+// Validation function validator body parser struct.
+func Validation(i any) []*ErrorValidation {
+	return validationFunc(val, i)
 }
 
-func (ev *ErrorValidator) Error() string {
-	var errStrings []string
-	for _, e := range ev.Errors {
-		errStrings = append(errStrings, fmt.Sprintf("[%s]: %s", e.Field, e.Message))
+func (v New) Validate(i any) error {
+	if err := validationFunc(v.val, i); len(err) > 0 {
+		return ErrValidator(err)
 	}
-	return strings.Join(errStrings, ", ")
+	return nil
 }
 
-func Validate(i interface{}) error {
-	err := validate.Struct(i)
-	if err == nil {
-		return nil
+func validationFunc(v *validator.Validate, i any) []*ErrorValidation {
+	var validations []*ErrorValidation
+	if err := v.Struct(i); err != nil {
+		for _, e := range err.(validator.ValidationErrors) {
+			var element ErrorValidation
+			element.Tag = e.Tag()
+			element.Field = strings.ToLower(e.Field())
+			element.Message = "Error:Field validation for '" + e.Field() + "' failed on the '" + e.Tag() + "' tag"
+			validations = append(validations, &element)
+		}
 	}
 
-	var validationErrors []*ErrorValidation
-	for _, e := range err.(validator.ValidationErrors) {
-		validationErrors = append(validationErrors, &ErrorValidation{
-			Tag:     e.Tag(),
-			Field:   strings.ToLower(e.Field()),
-			Message: fmt.Sprintf("Field validation for '%s' failed on the '%s' tag", e.Field(), e.Tag()),
-		})
-	}
-
-	return &ErrorValidator{Errors: validationErrors}
+	return validations
 }
